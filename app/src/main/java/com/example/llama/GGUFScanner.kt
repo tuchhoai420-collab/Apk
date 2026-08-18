@@ -14,7 +14,7 @@ import java.util.regex.Pattern
 
 class GGUFScanner(private val context: Context) {
 
-    private val quantPattern = Pattern.compile("(Q\\d+_[K|S|M|L]+|q\\d+_\\d|Q\\d+_\\d|IQ\\d+_[A-Z]+|FP16|BF16|F16|F32)", Pattern.CASE_INSENSITIVE)
+    private val quantPattern = Pattern.compile("(Q\\d+_[KSML]+|q\\d+_\\d|Q\\d+_\\d|IQ\\d+_[A-Z]+|FP16|BF16|F16|F32)", Pattern.CASE_INSENSITIVE)
     private val paramPattern = Pattern.compile("(\\d+\\.?\\d*B|\\d+k)", Pattern.CASE_INSENSITIVE)
     private val archKeywords = listOf("llama", "qwen", "mistral", "gemma", "phi", "deepseek", "starcoder", "command-r", "vicuna")
 
