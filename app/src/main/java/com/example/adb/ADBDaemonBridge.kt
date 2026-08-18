@@ -119,13 +119,20 @@ class ADBDaemonBridge(private val context: Context) {
             writer.flush()
 
             val sb = StringBuilder()
-            var line: String? = null
-            var count = 0
-            while (count < 50 && reader.ready().also { if (it) line = reader.readLine() }) {
-                if (line != null) {
+            val deadline = System.currentTimeMillis() + socket.soTimeout
+            var line: String?
+            // Espera activa acotada: si aún no hay datos, da chance a que lleguen
+            // en vez de descartar la respuesta por no estar lista en el instante exacto.
+            while (System.currentTimeMillis() < deadline) {
+                if (reader.ready()) {
+                    line = reader.readLine() ?: break
                     sb.append(line).append("\n")
+                } else if (sb.isNotEmpty()) {
+                    // Ya llegó algo y no hay más pendiente: asumimos fin de respuesta.
+                    break
+                } else {
+                    Thread.sleep(20)
                 }
-                count++
             }
 
             socket.close()
