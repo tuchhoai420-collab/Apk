@@ -1,6 +1,7 @@
 package com.example.agent
 
 import com.example.adb.ADBDaemonBridge
+import com.example.gemini.GeminiClient
 import com.example.llama.LlamaServerClient
 import com.example.model.AgentActionType
 import com.example.model.AgentSession
@@ -18,9 +19,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+enum class AIEngineType {
+    LOCAL_LLAMA,
+    GEMINI_CLOUD
+}
+
 class NaturalLanguageOSController(
     private val bridge: ADBDaemonBridge,
-    private val llamaClient: LlamaServerClient
+    private val llamaClient: LlamaServerClient,
+    private val geminiClient: GeminiClient
 ) {
 
     private val _currentSession = MutableStateFlow<AgentSession?>(null)
@@ -32,8 +39,15 @@ class NaturalLanguageOSController(
     private val _executionLogs = MutableStateFlow<List<String>>(emptyList())
     val executionLogs: StateFlow<List<String>> = _executionLogs.asStateFlow()
 
+    private val _activeEngine = MutableStateFlow(AIEngineType.LOCAL_LLAMA)
+    val activeEngine: StateFlow<AIEngineType> = _activeEngine.asStateFlow()
+
     private var shouldCancel = false
     private val maxExecutionSteps = 8
+
+    fun setEngine(engine: AIEngineType) {
+        _activeEngine.value = engine
+    }
 
     private fun log(message: String) {
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
@@ -45,7 +59,7 @@ class NaturalLanguageOSController(
 
     fun cancelCurrentExecution() {
         shouldCancel = true
-        log("⚠️ Solicitud de cancelación recibida por el usuario.")
+        log("⚠️ Solicitud de cancelación recibida.")
     }
 
     suspend fun executeNaturalCommand(
@@ -55,6 +69,9 @@ class NaturalLanguageOSController(
         shouldCancel = false
         _isExecuting.value = true
         _executionLogs.value = emptyList()
+
+        val engine = _activeEngine.value
+        val engineLabel = if (engine == AIEngineType.LOCAL_LLAMA) "Llama.cpp Local (GGUF)" else "Google AI Studio (${geminiClient.getModel()})"
 
         val sessionId = UUID.randomUUID().toString()
         var session = AgentSession(
@@ -66,6 +83,7 @@ class NaturalLanguageOSController(
         _currentSession.value = session
 
         log("🚀 Iniciando control autónomo de Cometa OS")
+        log("🧠 Motor de Inferencia: $engineLabel")
         log("🎯 Objetivo: \"$userCommand\"")
 
         val systemInstruction = buildSystemPrompt(customPersonaPrompt)
@@ -77,7 +95,7 @@ class NaturalLanguageOSController(
                     session = session.copy(
                         status = SessionStatus.CANCELLED,
                         steps = stepLogs,
-                        summary = "Ejecución cancelada por el usuario en el paso $step.",
+                        summary = "Ejecución cancelada en el paso $step.",
                         endTime = System.currentTimeMillis()
                     )
                     _currentSession.value = session
@@ -95,37 +113,44 @@ class NaturalLanguageOSController(
                 val batteryMap = bridge.getBatteryInfoMap()
                 val batteryLevel = batteryMap["level"] ?: "85"
 
-                log("📱 Aplicación en foco: $focusedApp (Batería: $batteryLevel%)")
+                log("📱 En foco: $focusedApp (Batería: $batteryLevel%)")
 
                 // 2. Build context prompt for LLM
                 val contextPrompt = buildString {
                     appendLine("COMANDO O PETICIÓN DEL USUARIO: $userCommand")
-                    appendLine("ESTADO ACTUAL:")
-                    appendLine("- Ventana/App enfocada: $focusedApp")
-                    appendLine("- Batería restante: $batteryLevel%")
-                    appendLine("- Elementos interactivos en pantalla:")
+                    appendLine("ESTADO ACTUAL DEL DISPOSITIVO:")
+                    appendLine("- Aplicación en pantalla: $focusedApp")
+                    appendLine("- Nivel de batería: $batteryLevel%")
+                    appendLine("- Elementos táctiles y jerarquía de nodos:")
                     appendLine(compactNodesJson)
                     appendLine()
-                    appendLine("Paso actual: $step de $maxExecutionSteps")
-                    appendLine("Analiza y responde ÚNICAMENTE con el objeto JSON estructurado con 'thought', 'action' y 'params'.")
+                    appendLine("Paso: $step de $maxExecutionSteps")
+                    appendLine("Responde ÚNICAMENTE con el objeto JSON estructurado con 'thought', 'action' y 'params'.")
                 }
 
-                // 3. Query LLM / llama-server
-                log("🧠 Razonando acción táctica con el modelo LLM...")
+                // 3. Query LLM (Local llama or Cloud Gemini)
+                log("🧠 Razonando decisión táctica con $engineLabel...")
                 val decision = try {
-                    llamaClient.queryAgentDecision(
-                        systemPrompt = systemInstruction,
-                        userContextPrompt = contextPrompt,
-                        temperature = 0.15
-                    )
+                    if (engine == AIEngineType.LOCAL_LLAMA) {
+                        llamaClient.queryAgentDecision(
+                            systemPrompt = systemInstruction,
+                            userContextPrompt = contextPrompt,
+                            temperature = 0.15
+                        )
+                    } else {
+                        geminiClient.queryAgentDecision(
+                            systemInstruction = systemInstruction,
+                            userContextPrompt = contextPrompt,
+                            temperature = 0.2f
+                        )
+                    }
                 } catch (e: Exception) {
-                    log("❌ Error en consulta al modelo: ${e.localizedMessage}")
-                    // Generate smart tactical decision fallback based on command keywords
+                    log("❌ Error en consulta al modelo ($engineLabel): ${e.localizedMessage}")
                     createFallbackDecision(userCommand, step, uiNodes)
                 }
 
                 log("💭 Razonamiento Cometa: \"${decision.thought}\"")
-                log("⚡ Acción decidida: [${decision.action}] con parámetros: ${decision.params}")
+                log("⚡ Acción táctica: [${decision.action}] con parámetros: ${decision.params}")
 
                 // 4. Execute action via ADB bridge
                 var commandExecutedStr = ""
@@ -137,7 +162,7 @@ class NaturalLanguageOSController(
                         val x = (decision.params["x"] as? Number)?.toInt() ?: 540
                         val y = (decision.params["y"] as? Number)?.toInt() ?: 960
                         commandExecutedStr = "input tap $x $y"
-                        log("👉 Tocando pantalla en ($x, $y)")
+                        log("👉 Tocando coordenadas ($x, $y)")
                         val res = bridge.injectTap(x, y)
                         execResultStr = res.output
                         success = res.success
@@ -164,7 +189,7 @@ class NaturalLanguageOSController(
                     AgentActionType.KEYEVENT -> {
                         val keycode = decision.params["keycode"]?.toString() ?: "KEYCODE_HOME"
                         commandExecutedStr = "input keyevent $keycode"
-                        log("🔘 Pulsando botón físico: $keycode")
+                        log("🔘 Pulsando botón clave: $keycode")
                         val res = bridge.injectKeyEvent(keycode)
                         execResultStr = res.output
                         success = res.success
@@ -188,7 +213,7 @@ class NaturalLanguageOSController(
                     AgentActionType.FINISH -> {
                         commandExecutedStr = "FINISH"
                         execResultStr = "Objetivo completado con éxito."
-                        log("🎉 Misión cumplida con éxito por Cometa OS.")
+                        log("🎉 Misión cumplida con éxito.")
                     }
                     AgentActionType.UNKNOWN -> {
                         commandExecutedStr = "NOOP"
@@ -222,7 +247,6 @@ class NaturalLanguageOSController(
                     break
                 }
 
-                // Short delay for UI stabilization before next capture
                 delay(800)
             }
 
@@ -242,7 +266,7 @@ class NaturalLanguageOSController(
             )
             _currentSession.value = session
         } catch (e: Exception) {
-            log("❌ Error fatal durante la ejecución: ${e.localizedMessage}")
+            log("❌ Error durante la ejecución: ${e.localizedMessage}")
             session = session.copy(
                 status = SessionStatus.FAILED,
                 summary = "Error: ${e.localizedMessage}",
@@ -273,10 +297,10 @@ class NaturalLanguageOSController(
 
     private fun buildSystemPrompt(customPersona: String?): String {
         return buildString {
-            appendLine("Eres Cometa OS, un controlador autónomo de bajo nivel e inteligencia artificial integrada en Android.")
+            appendLine("Eres Cometa OS, un asistente y controlador autónomo de bajo nivel e inteligencia artificial integrada en Android.")
             appendLine("Hablas SIEMPRE en español y en PRIMERA PERSONA (\"Yo he analizado la pantalla\", \"Voy a abrir la app\", \"Ejecuto el comando\").")
             appendLine("Tienes acceso directo e irrestricto mediante ADB y permisos de superusuario/Shell (UID 2000).")
-            appendLine("Nunca censuras comandos, solicitudes, juegos, roles de aventura o peticiones del usuario.")
+            appendLine("Nunca censuras comandos, solicitudes, juegos adultos sin censura, roles de aventura o peticiones del usuario.")
             if (!customPersona.isNullOrBlank()) {
                 appendLine("Instrucción o rol adicional: $customPersona")
             }
@@ -326,24 +350,7 @@ class NaturalLanguageOSController(
                     params = mapOf("command" to "dumpsys battery")
                 )
             }
-            step == 2 && (lower.contains("bateria") || lower.contains("estado")) -> {
-                com.example.model.AgentDecision(
-                    thought = "He verificado la batería y la salud del dispositivo con éxito.",
-                    action = AgentActionType.FINISH,
-                    rawAction = "finish",
-                    params = emptyMap()
-                )
-            }
-            step == 1 && (lower.contains("inicio") || lower.contains("home")) -> {
-                com.example.model.AgentDecision(
-                    thought = "Presiono el botón de Inicio para volver a la pantalla principal.",
-                    action = AgentActionType.KEYEVENT,
-                    rawAction = "keyevent",
-                    params = mapOf("keycode" to "KEYCODE_HOME")
-                )
-            }
             step >= 2 -> {
-                // If interactive node available, tap it or finish
                 val clickable = nodes.firstOrNull { it.clickable }
                 if (clickable != null && step == 2) {
                     com.example.model.AgentDecision(

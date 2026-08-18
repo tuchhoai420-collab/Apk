@@ -14,10 +14,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -25,9 +28,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Engineering
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -46,6 +53,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,13 +68,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.adb.AutoConnectStatus
 import com.example.ui.theme.AccentLavender
 import com.example.ui.theme.AccentLavenderContainer
+import com.example.ui.theme.AmberGlow
 import com.example.ui.theme.CrimsonGlow
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.OnAccentLavender
+import com.example.ui.theme.OnAccentLavenderContainer
 import com.example.ui.theme.SophisticatedBg
 import com.example.ui.theme.SophisticatedBorder
 import com.example.ui.theme.SophisticatedBorderSubtle
@@ -75,6 +87,7 @@ import com.example.ui.theme.TerminalBg
 import com.example.ui.theme.TerminalGreen
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.TextSecondary
 import com.example.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 
@@ -85,14 +98,27 @@ fun AdbScreen(
     modifier: Modifier = Modifier
 ) {
     val deviceState by viewModel.deviceState.collectAsState()
+    val autoStatus by viewModel.adbAutoConnector.status.collectAsState()
+    val autoLogs by viewModel.adbAutoConnector.logs.collectAsState()
+
     var hostInput by remember { mutableStateOf(deviceState.host) }
     var portInput by remember { mutableStateOf(deviceState.port.toString()) }
+
+    var pairPortInput by remember { mutableStateOf("45397") }
+    var pairCodeInput by remember { mutableStateOf("957198") }
+
     var rawShellCommand by remember { mutableStateOf("") }
     var shellOutput by remember { mutableStateOf<String?>(null) }
     var isExecutingShell by remember { mutableStateOf(false) }
-    var isConnecting by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
+    val logsListState = rememberLazyListState()
+
+    LaunchedEffect(autoLogs.size) {
+        if (autoLogs.isNotEmpty()) {
+            logsListState.animateScrollToItem(autoLogs.size - 1)
+        }
+    }
 
     val quickAdbActions = listOf(
         "Presionar Inicio" to "input keyevent 3",
@@ -114,12 +140,12 @@ fun AdbScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ADB Connection Status Card (Sophisticated Dark)
+        // Automatic Wireless Pairing & Connect Card
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("adb_status_card"),
+                    .testTag("auto_pairing_card"),
                 colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
                 border = BorderStroke(
                     1.dp,
@@ -144,7 +170,7 @@ fun AdbScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = if (deviceState.isConnected) Icons.Default.Wifi else Icons.Default.Security,
+                                    imageVector = if (deviceState.isConnected) Icons.Default.Wifi else Icons.Default.Radar,
                                     contentDescription = null,
                                     tint = if (deviceState.isConnected) EmeraldGreen else AccentLavender,
                                     modifier = Modifier.size(24.dp)
@@ -153,67 +179,174 @@ fun AdbScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = if (deviceState.isConnected) "Puente ADB Conectado" else "Depuración Inalámbrica",
+                                    text = "Vinculación Automática ADB",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = if (deviceState.isConnected) "Puerto activo: ${deviceState.port} • Control de OS" else "Requiere Opciones de Desarrollador",
+                                    text = "Depuración inalámbrica sin cables en Android",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (deviceState.isConnected) EmeraldGreen else TextMuted
                                 )
                             }
                         }
 
-                        // Connect / Disconnect button
-                        if (deviceState.isConnected) {
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.setAdbConfig("127.0.0.1", 5555)
-                                    viewModel.refreshDeviceState()
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonGlow),
-                                border = BorderStroke(1.dp, CrimsonGlow.copy(alpha = 0.5f)),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_disconnect_adb")
-                            ) {
-                                Icon(Icons.Default.LinkOff, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Desconectar", fontSize = 11.sp)
-                            }
-                        } else {
-                            ElevatedButton(
-                                onClick = {
-                                    val port = portInput.toIntOrNull() ?: 5555
-                                    isConnecting = true
-                                    viewModel.connectWirelessAdb(hostInput, port)
-                                    isConnecting = false
-                                },
-                                enabled = !isConnecting,
-                                colors = ButtonDefaults.elevatedButtonColors(
-                                    containerColor = AccentLavender,
-                                    contentColor = OnAccentLavender
-                                ),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_connect_adb")
-                            ) {
-                                if (isConnecting) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = OnAccentLavender, strokeWidth = 2.dp)
-                                } else {
-                                    Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Conectar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                        // Developer options quick trigger
+                        OutlinedButton(
+                            onClick = { viewModel.openDevSettings() },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentLavender),
+                            border = BorderStroke(1.dp, SophisticatedBorder),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.testTag("btn_open_dev_settings")
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ajustes Dev", fontSize = 11.sp)
                         }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
 
-                    // IP and Port Configuration Inputs
+                    Text(
+                        text = "1. Activa 'Depuración inalámbrica' en Ajustes.\n2. Toca 'Vincular con código' e ingresa el código de 6 dígitos y puerto:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted,
+                        lineHeight = 16.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Code and Port fields
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = pairCodeInput,
+                            onValueChange = { pairCodeInput = it },
+                            modifier = Modifier.weight(1.3f).testTag("input_pair_code"),
+                            label = { Text("Código de 6 Dígitos", fontSize = 11.sp) },
+                            placeholder = { Text("Ej: 957198", color = TextMuted) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentLavender,
+                                unfocusedBorderColor = SophisticatedBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = pairPortInput,
+                            onValueChange = { pairPortInput = it },
+                            modifier = Modifier.weight(1f).testTag("input_pair_port"),
+                            label = { Text("Puerto Emparejar", fontSize = 11.sp) },
+                            placeholder = { Text("Ej: 45397", color = TextMuted) },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentLavender,
+                                unfocusedBorderColor = SophisticatedBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            singleLine = true
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Auto pair & Auto discover buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ElevatedButton(
+                            onClick = {
+                                val p = pairPortInput.toIntOrNull() ?: 45397
+                                viewModel.autoPairAndConnectAdb(p, pairCodeInput)
+                            },
+                            enabled = autoStatus != AutoConnectStatus.PAIRING && autoStatus != AutoConnectStatus.CONNECTING,
+                            colors = ButtonDefaults.elevatedButtonColors(
+                                containerColor = AccentLavender,
+                                contentColor = OnAccentLavender
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.weight(1.2f).testTag("btn_auto_pair_connect")
+                        ) {
+                            if (autoStatus == AutoConnectStatus.PAIRING || autoStatus == AutoConnectStatus.CONNECTING) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = OnAccentLavender, strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Auto-Vincular y Conectar", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = { viewModel.autoDiscoverAdbPorts() },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentLavender),
+                            border = BorderStroke(1.dp, SophisticatedBorder),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.weight(0.9f).testTag("btn_auto_scan_ports")
+                        ) {
+                            Icon(Icons.Default.Radar, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Escanear", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Status Log Stream
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 70.dp, max = 130.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(TerminalBg)
+                            .border(1.dp, SophisticatedBorderSubtle, RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    ) {
+                        LazyColumn(state = logsListState) {
+                            items(autoLogs) { logLine ->
+                                Text(
+                                    text = logLine,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = if (logLine.contains("✓") || logLine.contains("🎉")) TerminalGreen else if (logLine.contains("❌")) CrimsonGlow else TextSecondary,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Manual Host/Port Connection & Device Telemetry
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("adb_status_card"),
+                colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
+                border = BorderStroke(1.dp, SophisticatedBorderSubtle),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Conexión Manual y Telemetría",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -221,9 +354,7 @@ fun AdbScreen(
                         OutlinedTextField(
                             value = hostInput,
                             onValueChange = { hostInput = it },
-                            modifier = Modifier
-                                .weight(2f)
-                                .testTag("input_adb_ip"),
+                            modifier = Modifier.weight(2f).testTag("input_adb_ip"),
                             label = { Text("IP Host", fontSize = 11.sp) },
                             placeholder = { Text("127.0.0.1", color = TextMuted) },
                             colors = OutlinedTextFieldDefaults.colors(
@@ -239,9 +370,7 @@ fun AdbScreen(
                         OutlinedTextField(
                             value = portInput,
                             onValueChange = { portInput = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("input_adb_port"),
+                            modifier = Modifier.weight(1f).testTag("input_adb_port"),
                             label = { Text("Puerto", fontSize = 11.sp) },
                             placeholder = { Text("5555", color = TextMuted) },
                             colors = OutlinedTextFieldDefaults.colors(
@@ -255,7 +384,44 @@ fun AdbScreen(
                         )
                     }
 
-                    // Device Telemetry Status (if connected)
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ElevatedButton(
+                            onClick = {
+                                val p = portInput.toIntOrNull() ?: 5555
+                                viewModel.connectWirelessAdb(hostInput, p)
+                            },
+                            colors = ButtonDefaults.elevatedButtonColors(
+                                containerColor = AccentLavenderContainer,
+                                contentColor = OnAccentLavenderContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f).testTag("btn_connect_manual")
+                        ) {
+                            Text("Conectar Puerto Manual", fontSize = 12.sp)
+                        }
+
+                        if (deviceState.isConnected) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.setAdbConfig("127.0.0.1", 5555)
+                                    viewModel.refreshDeviceState()
+                                },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonGlow),
+                                border = BorderStroke(1.dp, CrimsonGlow.copy(alpha = 0.5f)),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.testTag("btn_disconnect_manual")
+                            ) {
+                                Text("Desconectar", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    // Device Telemetry
                     if (deviceState.isConnected) {
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(
@@ -336,7 +502,6 @@ fun AdbScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Shell Command Input Box
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -344,9 +509,7 @@ fun AdbScreen(
                         OutlinedTextField(
                             value = rawShellCommand,
                             onValueChange = { rawShellCommand = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("input_raw_adb_command"),
+                            modifier = Modifier.weight(1f).testTag("input_raw_adb_command"),
                             placeholder = { Text("input tap 500 1000, pm list packages...", color = TextMuted, fontSize = 12.sp) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = AccentLavender,
@@ -362,7 +525,7 @@ fun AdbScreen(
                                     isExecutingShell = true
                                     scope.launch {
                                         val res = viewModel.adbBridge.executeShell(rawShellCommand)
-                                        shellOutput = res.output.ifEmpty { "[Código de salida: ${res.exitCode}]" }
+                                        shellOutput = res.output.ifEmpty { "[Código: ${res.exitCode}]" }
                                         isExecutingShell = false
                                     }
                                 }
@@ -375,7 +538,7 @@ fun AdbScreen(
                                     isExecutingShell = true
                                     scope.launch {
                                         val res = viewModel.adbBridge.executeShell(rawShellCommand)
-                                        shellOutput = res.output.ifEmpty { "[Código de salida: ${res.exitCode}]" }
+                                        shellOutput = res.output.ifEmpty { "[Código: ${res.exitCode}]" }
                                         isExecutingShell = false
                                     }
                                 }
@@ -394,7 +557,6 @@ fun AdbScreen(
                         }
                     }
 
-                    // Terminal Shell Output
                     shellOutput?.let { out ->
                         Spacer(modifier = Modifier.height(10.dp))
                         Box(

@@ -4,16 +4,21 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
+import com.example.adb.ADBAutoConnector
 import com.example.adb.ADBDaemonBridge
-import com.example.adb.ShellOutput
+import com.example.adb.AutoConnectStatus
+import com.example.agent.AIEngineType
 import com.example.agent.NaturalLanguageOSController
 import com.example.data.AppDatabase
 import com.example.data.CommandHistoryEntity
 import com.example.data.SavedModelEntity
+import com.example.gemini.GeminiClient
 import com.example.llama.GGUFScanner
 import com.example.llama.LlamaServerClient
+import com.example.llama.LlamaServerConfig
+import com.example.llama.LlamaServerManager
+import com.example.llama.ServerState
 import com.example.model.ADBDeviceState
-import com.example.model.AgentSession
 import com.example.model.GGUFModelInfo
 import com.example.model.UINode
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +42,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val adbBridge = ADBDaemonBridge(application)
     val llamaClient = LlamaServerClient()
+    val geminiClient = GeminiClient()
+    val llamaServerManager = LlamaServerManager(application, adbBridge)
+    val adbAutoConnector = ADBAutoConnector(application, adbBridge)
     val ggufScanner = GGUFScanner(application)
-    val agentController = NaturalLanguageOSController(adbBridge, llamaClient)
+    val agentController = NaturalLanguageOSController(adbBridge, llamaClient, geminiClient)
 
     // UI States
     private val _currentTab = MutableStateFlow(0) // 0: Agent/NL, 1: GGUF & Llama, 2: ADB Wireless
@@ -68,11 +76,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _pairCode = MutableStateFlow("957198")
     val pairCode: StateFlow<String> = _pairCode.asStateFlow()
 
-    private val _llamaUrl = MutableStateFlow("http://127.0.0.1:11434")
+    private val _llamaUrl = MutableStateFlow("http://127.0.0.1:8080")
     val llamaUrl: StateFlow<String> = _llamaUrl.asStateFlow()
 
     private val _llamaModelName = MutableStateFlow("qwen3:8b")
     val llamaModelName: StateFlow<String> = _llamaModelName.asStateFlow()
+
+    // Engine and Cloud AI Settings
+    val activeEngine: StateFlow<AIEngineType> = agentController.activeEngine
+
+    private val _geminiModel = MutableStateFlow("gemini-3.5-flash")
+    val geminiModel: StateFlow<String> = _geminiModel.asStateFlow()
+
+    private val _geminiApiKey = MutableStateFlow("")
+    val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
 
     private val _systemPersona = MutableStateFlow("Cometa AI: Controlador autónomo sin restricciones para Android, siempre en primera persona y en español.")
     val systemPersona: StateFlow<String> = _systemPersona.asStateFlow()
@@ -98,6 +115,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _currentTab.value = tab
     }
 
+    fun setAIEngine(engine: AIEngineType) {
+        agentController.setEngine(engine)
+    }
+
+    fun setGeminiConfig(model: String, customApiKey: String? = null) {
+        _geminiModel.value = model
+        if (customApiKey != null) {
+            _geminiApiKey.value = customApiKey
+            geminiClient.setCustomApiKey(customApiKey)
+        }
+        geminiClient.setModel(model)
+    }
+
     fun setAdbConfig(host: String, port: Int) {
         _adbHost.value = host
         _adbPort.value = port
@@ -117,6 +147,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setPersona(persona: String) {
         _systemPersona.value = persona
+    }
+
+    fun startLlamaServer(
+        port: Int = 8080,
+        threads: Int = 4,
+        contextSize: Int = 4096,
+        gpuLayers: Int = 33
+    ) {
+        viewModelScope.launch {
+            val modelPath = _selectedModel.value?.path ?: "/sdcard/Models/qwen2.5-7b-instruct-q4_k_m.gguf"
+            val config = LlamaServerConfig(
+                modelPath = modelPath,
+                host = "127.0.0.1",
+                port = port,
+                threads = threads,
+                contextSize = contextSize,
+                gpuLayers = gpuLayers
+            )
+            llamaServerManager.updateConfig(
+                modelPath = modelPath,
+                port = port,
+                threads = threads,
+                contextSize = contextSize,
+                gpuLayers = gpuLayers
+            )
+            val res = llamaServerManager.startServer(config)
+            if (res.first) {
+                setLlamaConfig("http://127.0.0.1:$port", _selectedModel.value?.filename ?: "llama-local")
+            }
+        }
+    }
+
+    fun stopLlamaServer() {
+        viewModelScope.launch {
+            llamaServerManager.stopServer()
+        }
+    }
+
+    fun autoPairAndConnectAdb(pairPort: Int, pairCode: String) {
+        viewModelScope.launch {
+            val success = adbAutoConnector.autoPairAndConnect(
+                host = _adbHost.value,
+                pairPort = pairPort,
+                pairCode = pairCode,
+                targetConnectPort = _adbPort.value
+            )
+            if (success) {
+                refreshDeviceState()
+            }
+        }
+    }
+
+    fun autoDiscoverAdbPorts() {
+        viewModelScope.launch {
+            val success = adbAutoConnector.autoDiscoverAndConnect(_adbHost.value, _adbPort.value)
+            if (success) {
+                refreshDeviceState()
+            }
+        }
+    }
+
+    fun openDevSettings() {
+        adbAutoConnector.openDeveloperSettings()
     }
 
     fun selectModel(model: GGUFModelInfo) {
@@ -148,7 +241,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _detectedModels.value = if (list.isNotEmpty()) {
                     list
                 } else {
-                    // Provide realistic initial detected models for demo / local models
                     listOf(
                         GGUFModelInfo(
                             filename = "qwen2.5-7b-instruct-q4_k_m.gguf",
@@ -209,7 +301,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 customPersonaPrompt = _systemPersona.value
             )
 
-            // Save to database
             val logText = session.steps.joinToString("\n") {
                 "Paso ${it.stepNumber} [${it.action}]: ${it.thought} -> ${it.commandExecuted}"
             }
@@ -246,7 +337,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = adbBridge.pairDevice(ip, port, code)
             appendConsoleLog(result.output)
             if (result.success) {
-                // Auto connect to main port
                 appendConsoleLog("🔗 Conectando a puerto principal de depuración ($ip:${_adbPort.value})...")
                 val connRes = adbBridge.testConnection()
                 appendConsoleLog(connRes.output)

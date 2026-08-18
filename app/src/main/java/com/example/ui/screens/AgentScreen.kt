@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,33 +27,34 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DataObject
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -69,13 +72,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.agent.AIEngineType
+import com.example.model.AgentActionType
+import com.example.model.AgentStepLog
 import com.example.model.SessionStatus
 import com.example.ui.theme.AccentLavender
+import com.example.ui.theme.AccentLavenderContainer
 import com.example.ui.theme.AmberGlow
 import com.example.ui.theme.CrimsonGlow
 import com.example.ui.theme.EmeraldGreen
-import com.example.ui.theme.InfoCode
 import com.example.ui.theme.OnAccentLavender
+import com.example.ui.theme.OnAccentLavenderContainer
 import com.example.ui.theme.SophisticatedBg
 import com.example.ui.theme.SophisticatedBorder
 import com.example.ui.theme.SophisticatedBorderSubtle
@@ -87,446 +94,428 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.viewmodel.MainViewModel
 
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AgentScreen(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
-    var promptInput by remember { mutableStateOf("") }
     val currentSession by viewModel.agentController.currentSession.collectAsState()
     val isExecuting by viewModel.agentController.isExecuting.collectAsState()
     val executionLogs by viewModel.agentController.executionLogs.collectAsState()
     val deviceState by viewModel.deviceState.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
-    val historyList by viewModel.historyList.collectAsState()
+    val activeEngine by viewModel.activeEngine.collectAsState()
+    val geminiModel by viewModel.geminiModel.collectAsState()
 
-    var showHistorySheet by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    var naturalPrompt by remember { mutableStateOf("") }
+    val logsListState = rememberLazyListState()
 
-    // Auto scroll logs
     LaunchedEffect(executionLogs.size) {
         if (executionLogs.isNotEmpty()) {
-            listState.animateScrollToItem(executionLogs.size - 1)
+            logsListState.animateScrollToItem(executionLogs.size - 1)
         }
     }
 
-    val quickMacros = listOf(
-        "Verificar batería y memoria" to Icons.Default.BatteryChargingFull,
-        "Abrir Ajustes del dispositivo" to Icons.Default.Settings,
-        "Abrir YouTube y buscar" to Icons.Default.Videocam,
-        "Volver a Inicio" to Icons.Default.Home,
-        "Inspeccionar app activa" to Icons.Default.Search
+    val quickCommands = listOf(
+        "Abre YouTube y busca música lofi",
+        "Consulta la batería y estado de memoria",
+        "Abre Ajustes y activa modo oscuro",
+        "Toma captura de pantalla y guarda en /sdcard",
+        "Inicia juego de rol cometa sin restricciones"
     )
 
-    Column(
+    LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .background(SophisticatedBg)
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Active Model & Telemetry Card (Sophisticated Dark Style)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("agent_header_card"),
-            colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
-            border = BorderStroke(1.dp, SophisticatedBorder),
-            shape = RoundedCornerShape(24.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text(
-                            text = "MODELO ACTIVO",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = AccentLavender,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = selectedModel?.filename ?: "Meta-Llama-3-8B",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "${selectedModel?.quantization ?: "Q4_K_M"} • ${selectedModel?.sizeFormatted ?: "4.92 GB"} • ${selectedModel?.architecture ?: "LLaMA"}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextMuted
-                        )
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            color = SophisticatedBorder,
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(
-                                text = if (selectedModel != null) "Cargado" else "Listo",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextPrimary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(4.dp))
-
-                        IconButton(
-                            onClick = { showHistorySheet = true },
-                            modifier = Modifier.testTag("btn_open_history")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.History,
-                                contentDescription = "Ver Historial",
-                                tint = TextSecondary
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Telemetry mini boxes
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    MiniTelemetryBox(label = "BATERÍA", value = deviceState.batteryLevel, modifier = Modifier.weight(1f))
-                    MiniTelemetryBox(label = "RESOLUCIÓN", value = deviceState.screenResolution.take(9), modifier = Modifier.weight(1f))
-                    MiniTelemetryBox(label = "CONEXIÓN", value = if (deviceState.isConnected) "5555" else "Local", modifier = Modifier.weight(1f))
-                }
-            }
-        }
-
-        // Quick Macro Chips
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            quickMacros.forEach { (macroText, icon) ->
-                FilterChip(
-                    selected = false,
-                    onClick = {
-                        promptInput = macroText
-                        viewModel.executeNaturalCommand(macroText)
-                    },
-                    label = { Text(macroText, fontSize = 11.sp, color = TextPrimary) },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = AccentLavender,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = SophisticatedSurface,
-                        labelColor = TextPrimary
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        borderColor = SophisticatedBorderSubtle,
-                        enabled = true,
-                        selected = false
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.testTag("macro_chip_${macroText.take(10)}")
-                )
-            }
-        }
-
-        // Terminal / Console View (Sophisticated Dark Terminal: #000000 with #313033 border)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(TerminalBg)
-                .border(1.dp, SophisticatedBorderSubtle, RoundedCornerShape(18.dp))
-                .padding(14.dp)
-                .testTag("agent_session_card")
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Terminal Header / Status
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val (statusColor, statusText) = when (currentSession?.status) {
-                            SessionStatus.RUNNING -> AccentLavender to "EJECUTANDO..."
-                            SessionStatus.SUCCESS -> EmeraldGreen to "FINALIZADO CON ÉXITO"
-                            SessionStatus.CANCELLED -> AmberGlow to "CANCELADO"
-                            SessionStatus.FAILED -> CrimsonGlow to "ERROR"
-                            else -> TextMuted to "TERMINAL LISTO"
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(statusColor)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = statusText,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = statusColor
-                        )
-                    }
-
-                    if (isExecuting) {
-                        OutlinedButton(
-                            onClick = { viewModel.cancelAgent() },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonGlow),
-                            border = BorderStroke(1.dp, CrimsonGlow.copy(alpha = 0.5f)),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier
-                                .height(26.dp)
-                                .testTag("btn_cancel_agent")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Stop,
-                                contentDescription = "Detener",
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Detener", fontSize = 10.sp)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (executionLogs.isEmpty() && currentSession == null) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(bottom = 8.dp),
-                        verticalArrangement = Arrangement.Bottom
+        // AI Engine & Status Switcher Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ai_engine_switcher_card"),
+                colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
+                border = BorderStroke(1.dp, SophisticatedBorder),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = "$ llama.cpp --model ${selectedModel?.filename ?: "./models/llama-3.gguf"}",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = InfoCode
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "[INFO] Initializing KV cache...",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = AccentLavender
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "[SYSTEM] Native binary active via wireless debugging port 5555. Ready for commands.",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = TextPrimary
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "> ", color = EmeraldGreen, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-                            Text(text = "_", color = TextPrimary, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("execution_logs_list"),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        items(executionLogs) { logLine ->
-                            val color = when {
-                                logLine.contains("🚀") || logLine.contains("---") -> AccentLavender
-                                logLine.contains("💭") -> TextSecondary
-                                logLine.contains("👉") || logLine.contains("🔘") || logLine.contains("⌨️") -> EmeraldGreen
-                                logLine.contains("❌") -> CrimsonGlow
-                                logLine.contains("🎉") -> TerminalGreen
-                                else -> TextPrimary
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentLavenderContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (activeEngine == AIEngineType.LOCAL_LLAMA) Icons.Default.Memory else Icons.Default.Cloud,
+                                    contentDescription = null,
+                                    tint = AccentLavender,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
-                            Text(
-                                text = logLine,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                color = color,
-                                lineHeight = 16.sp
-                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = if (activeEngine == AIEngineType.LOCAL_LLAMA) "Motor Local: Llama.cpp" else "Motor Nube: Google Gemini",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = if (activeEngine == AIEngineType.LOCAL_LLAMA) (selectedModel?.filename ?: "GGUF Nativo") else geminiModel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = AccentLavender
+                                )
+                            }
                         }
+
+                        // ADB Device Status Pill
+                        Surface(
+                            color = if (deviceState.isConnected) EmeraldGreen.copy(alpha = 0.15f) else CrimsonGlow.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, if (deviceState.isConnected) EmeraldGreen.copy(alpha = 0.4f) else CrimsonGlow.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(if (deviceState.isConnected) EmeraldGreen else CrimsonGlow)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (deviceState.isConnected) "ADB Listo" else "ADB Desconectado",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (deviceState.isConnected) EmeraldGreen else CrimsonGlow
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Engine Selector Toggle Chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = activeEngine == AIEngineType.LOCAL_LLAMA,
+                            onClick = { viewModel.setAIEngine(AIEngineType.LOCAL_LLAMA) },
+                            label = { Text("Llama.cpp (Local GGUF)", fontSize = 12.sp) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Memory, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AccentLavenderContainer,
+                                selectedLabelColor = OnAccentLavenderContainer,
+                                containerColor = SophisticatedBg,
+                                labelColor = TextSecondary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = if (activeEngine == AIEngineType.LOCAL_LLAMA) AccentLavender else SophisticatedBorderSubtle,
+                                enabled = true,
+                                selected = activeEngine == AIEngineType.LOCAL_LLAMA
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f).testTag("chip_engine_llama")
+                        )
+
+                        FilterChip(
+                            selected = activeEngine == AIEngineType.GEMINI_CLOUD,
+                            onClick = { viewModel.setAIEngine(AIEngineType.GEMINI_CLOUD) },
+                            label = { Text("Gemini Cloud (AI Studio)", fontSize = 12.sp) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = AccentLavenderContainer,
+                                selectedLabelColor = OnAccentLavenderContainer,
+                                containerColor = SophisticatedBg,
+                                labelColor = TextSecondary
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = if (activeEngine == AIEngineType.GEMINI_CLOUD) AccentLavender else SophisticatedBorderSubtle,
+                                enabled = true,
+                                selected = activeEngine == AIEngineType.GEMINI_CLOUD
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f).testTag("chip_engine_gemini")
+                        )
                     }
                 }
             }
         }
 
-        // Pill Input Field & Circular Action Button
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp)
-        ) {
-            TextField(
-                value = promptInput,
-                onValueChange = { promptInput = it },
+        // Natural Language Input Card
+        item {
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .testTag("natural_prompt_input"),
-                placeholder = {
-                    Text(
-                        "Pregunta a Llama o ejecuta comando...",
-                        color = TextMuted,
-                        fontSize = 13.sp
-                    )
-                },
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = SophisticatedSurface,
-                    unfocusedContainerColor = SophisticatedSurface,
-                    focusedTextColor = TextPrimary,
-                    unfocusedTextColor = TextPrimary,
-                    cursorColor = AccentLavender,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent
-                ),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = {
-                    if (promptInput.isNotBlank() && !isExecuting) {
-                        val cmd = promptInput
-                        promptInput = ""
-                        viewModel.executeNaturalCommand(cmd)
-                    }
-                })
-            )
-
-            // Round action button placed directly inside right edge of pill
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 8.dp)
+                    .testTag("nl_input_card"),
+                colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
+                border = BorderStroke(1.dp, SophisticatedBorder),
+                shape = RoundedCornerShape(24.dp)
             ) {
-                IconButton(
-                    onClick = {
-                        if (promptInput.isNotBlank() && !isExecuting) {
-                            val cmd = promptInput
-                            promptInput = ""
-                            viewModel.executeNaturalCommand(cmd)
-                        }
-                    },
-                    enabled = promptInput.isNotBlank() && !isExecuting,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(if (promptInput.isNotBlank()) AccentLavender else SophisticatedBorder)
-                        .testTag("btn_send_prompt")
-                ) {
-                    if (isExecuting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = OnAccentLavender,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = "Enviar",
-                            tint = if (promptInput.isNotBlank()) OnAccentLavender else TextMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    // History Bottom Sheet
-    if (showHistorySheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showHistorySheet = false },
-            sheetState = rememberModalBottomSheetState(),
-            containerColor = SophisticatedSurface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = "Historial de Comandos",
+                        text = "¿Qué deseas ejecutar en Android?",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
-                    IconButton(onClick = { showHistorySheet = false }) {
-                        Icon(Icons.Default.Close, contentDescription = "Cerrar", tint = TextSecondary)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                if (historyList.isEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        "No hay comandos registrados aún.",
-                        color = TextMuted,
-                        style = MaterialTheme.typography.bodyMedium
+                        text = "El asistente razonará la pantalla activa y enviará los toques y comandos ADB.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted
                     )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(historyList) { item ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("history_item_${item.id}"),
-                                colors = CardDefaults.cardColors(containerColor = SophisticatedBg),
-                                border = BorderStroke(1.dp, SophisticatedBorderSubtle),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = item.userPrompt,
-                                            fontWeight = FontWeight.Bold,
-                                            color = TextPrimary,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        Text(
-                                            text = item.status,
-                                            color = if (item.status == "SUCCESS") EmeraldGreen else AmberGlow,
-                                            style = MaterialTheme.typography.labelSmall
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "${item.stepsCount} pasos ejecutados",
-                                        color = TextSecondary,
-                                        style = MaterialTheme.typography.bodySmall
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = naturalPrompt,
+                        onValueChange = { naturalPrompt = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("input_natural_command"),
+                        placeholder = { Text("Ej: 'Abre Spotify y reproduce mi playlist'...", color = TextMuted, fontSize = 14.sp) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentLavender,
+                            unfocusedBorderColor = SophisticatedBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            cursorColor = AccentLavender
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = {
+                            if (naturalPrompt.isNotBlank() && !isExecuting) {
+                                viewModel.executeNaturalCommand(naturalPrompt)
+                            }
+                        }),
+                        trailingIcon = {
+                            if (isExecuting) {
+                                IconButton(
+                                    onClick = { viewModel.cancelAgent() },
+                                    modifier = Modifier.testTag("btn_cancel_agent")
+                                ) {
+                                    Icon(Icons.Default.Stop, contentDescription = "Cancelar", tint = CrimsonGlow)
+                                }
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        if (naturalPrompt.isNotBlank()) {
+                                            viewModel.executeNaturalCommand(naturalPrompt)
+                                        }
+                                    },
+                                    enabled = naturalPrompt.isNotBlank(),
+                                    modifier = Modifier
+                                        .padding(end = 4.dp)
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(if (naturalPrompt.isNotBlank()) AccentLavender else SophisticatedBorder)
+                                        .testTag("btn_execute_agent")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Send,
+                                        contentDescription = "Ejecutar",
+                                        tint = if (naturalPrompt.isNotBlank()) OnAccentLavender else TextMuted,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
+                        },
+                        maxLines = 3
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Suggested quick commands
+                    Text(
+                        text = "Sugerencias rápidas:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextMuted
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        quickCommands.forEach { cmd ->
+                            Surface(
+                                onClick = {
+                                    naturalPrompt = cmd
+                                    viewModel.executeNaturalCommand(cmd)
+                                },
+                                color = SophisticatedBg,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, SophisticatedBorderSubtle),
+                                modifier = Modifier.testTag("chip_quick_${cmd.take(8)}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.FlashOn, contentDescription = null, tint = AccentLavender, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(text = cmd, fontSize = 11.sp, color = TextPrimary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Live Execution Terminal Box
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("agent_terminal_card"),
+                colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
+                border = BorderStroke(1.dp, SophisticatedBorderSubtle),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Code,
+                                contentDescription = null,
+                                tint = AccentLavender,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Consola de Razonamiento y ADB",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                        }
+
+                        if (isExecuting) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    color = AccentLavender,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Ejecutando...",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AccentLavender
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 220.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(TerminalBg)
+                            .border(1.dp, SophisticatedBorderSubtle, RoundedCornerShape(14.dp))
+                            .padding(12.dp)
+                    ) {
+                        if (executionLogs.isEmpty()) {
+                            Text(
+                                text = "Esperando comando de lenguaje natural para iniciar el ciclo táctico...",
+                                color = TextMuted,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp
+                            )
+                        } else {
+                            LazyColumn(state = logsListState) {
+                                items(executionLogs) { logLine ->
+                                    val textColor = when {
+                                        logLine.contains("❌") || logLine.contains("🛑") -> CrimsonGlow
+                                        logLine.contains("🎉") || logLine.contains("✓") -> EmeraldGreen
+                                        logLine.contains("💭") || logLine.contains("🧠") -> AccentLavender
+                                        logLine.contains("⚡") || logLine.contains("👉") -> AmberGlow
+                                        else -> TerminalGreen
+                                    }
+                                    Text(
+                                        text = logLine,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = textColor,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Active Session Step Breakdown Card
+        currentSession?.let { session ->
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("session_steps_card"),
+                    colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
+                    border = BorderStroke(1.dp, SophisticatedBorderSubtle),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Pasos Ejecutados (${session.steps.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                            StatusBadge(status = session.status)
+                        }
+
+                        if (session.summary.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = session.summary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = AccentLavender
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        session.steps.forEach { step ->
+                            StepItemView(step = step)
+                            Spacer(modifier = Modifier.height(8.dp))
                         }
                     }
                 }
@@ -536,19 +525,97 @@ fun AgentScreen(
 }
 
 @Composable
-fun MiniTelemetryBox(label: String, value: String, modifier: Modifier = Modifier) {
+fun StepItemView(step: AgentStepLog) {
     Surface(
-        modifier = modifier,
+        modifier = Modifier.fillMaxWidth(),
         color = SophisticatedBg,
-        shape = RoundedCornerShape(12.dp)
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, SophisticatedBorderSubtle)
     ) {
-        Column(
-            modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(text = label, color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(text = value, color = TextPrimary, fontSize = 13.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, maxLines = 1)
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = AccentLavenderContainer,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "Paso ${step.stepNumber}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = OnAccentLavenderContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "[${step.action}]",
+                        fontWeight = FontWeight.SemiBold,
+                        color = AccentLavender,
+                        fontSize = 12.sp
+                    )
+                }
+
+                Text(
+                    text = if (step.success) "✓ Éxito" else "⚠️ Advertencia",
+                    color = if (step.success) EmeraldGreen else AmberGlow,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = step.thought,
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+
+            if (step.commandExecuted.isNotBlank() && step.commandExecuted != "NOOP") {
+                Spacer(modifier = Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(TerminalBg)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "$ ${step.commandExecuted}",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = TerminalGreen
+                    )
+                }
+            }
         }
+    }
+}
+
+@Composable
+fun StatusBadge(status: SessionStatus) {
+    val (bgColor, textColor, label) = when (status) {
+        SessionStatus.RUNNING -> Triple(AccentLavenderContainer, OnAccentLavenderContainer, "En Proceso")
+        SessionStatus.SUCCESS -> Triple(EmeraldGreen.copy(alpha = 0.2f), EmeraldGreen, "Completado")
+        SessionStatus.FAILED -> Triple(CrimsonGlow.copy(alpha = 0.2f), CrimsonGlow, "Error")
+        SessionStatus.CANCELLED -> Triple(AmberGlow.copy(alpha = 0.2f), AmberGlow, "Cancelado")
+        SessionStatus.IDLE -> Triple(SophisticatedBorder, TextMuted, "Inactivo")
+    }
+
+    Surface(
+        color = bgColor,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = textColor,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
     }
 }

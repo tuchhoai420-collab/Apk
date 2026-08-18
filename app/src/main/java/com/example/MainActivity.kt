@@ -87,6 +87,7 @@ fun MainApp(viewModel: MainViewModel) {
     val currentTab by viewModel.currentTab.collectAsState()
     val deviceState by viewModel.deviceState.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
+    val activeEngine by viewModel.activeEngine.collectAsState()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -126,7 +127,7 @@ fun MainApp(viewModel: MainViewModel) {
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text(
-                                        text = "LLAMA.CPP",
+                                        text = if (activeEngine == com.example.agent.AIEngineType.LOCAL_LLAMA) "LLAMA.CPP" else "GEMINI AI",
                                         fontSize = 9.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = OnAccentLavenderContainer,
@@ -152,6 +153,7 @@ fun MainApp(viewModel: MainViewModel) {
                         }
                     }
                 },
+
                 actions = {
                     Surface(
                         color = SophisticatedSurface,

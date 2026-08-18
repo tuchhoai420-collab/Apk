@@ -14,21 +14,27 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,6 +42,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +53,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,11 +69,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.llama.ServerState
 import com.example.model.GGUFModelInfo
 import com.example.ui.theme.AccentLavender
 import com.example.ui.theme.AccentLavenderContainer
 import com.example.ui.theme.AmberGlow
+import com.example.ui.theme.CrimsonGlow
 import com.example.ui.theme.EmeraldGreen
+import com.example.ui.theme.OnAccentLavender
 import com.example.ui.theme.OnAccentLavenderContainer
 import com.example.ui.theme.SophisticatedBg
 import com.example.ui.theme.SophisticatedBorder
@@ -91,12 +103,40 @@ fun ModelsScreen(
     val llamaModelName by viewModel.llamaModelName.collectAsState()
     val systemPersona by viewModel.systemPersona.collectAsState()
 
+    // Llama Server Manager state
+    val serverState by viewModel.llamaServerManager.serverState.collectAsState()
+    val serverLogs by viewModel.llamaServerManager.serverLogs.collectAsState()
+    val serverConfig by viewModel.llamaServerManager.config.collectAsState()
+
+    // Gemini Cloud states
+    val geminiModel by viewModel.geminiModel.collectAsState()
+    val geminiApiKey by viewModel.geminiApiKey.collectAsState()
+
     var customScanPath by remember { mutableStateOf("") }
-    var urlInput by remember { mutableStateOf(llamaUrl) }
+    var serverPortInput by remember { mutableStateOf(serverConfig.port.toString()) }
+    var serverThreadsInput by remember { mutableStateOf(serverConfig.threads.toString()) }
+    var serverCtxInput by remember { mutableStateOf(serverConfig.contextSize.toString()) }
+    var serverNglInput by remember { mutableStateOf(serverConfig.gpuLayers.toString()) }
+
     var personaInput by remember { mutableStateOf(systemPersona) }
-    var testResultMsg by remember { mutableStateOf<String?>(null) }
-    var isTestingConnection by remember { mutableStateOf(false) }
+    var customApiKeyInput by remember { mutableStateOf(geminiApiKey) }
+    var geminiTestResult by remember { mutableStateOf<String?>(null) }
+    var isTestingGemini by remember { mutableStateOf(false) }
+
     val scope = rememberCoroutineScope()
+    val logsListState = rememberLazyListState()
+
+    LaunchedEffect(serverLogs.size) {
+        if (serverLogs.isNotEmpty()) {
+            logsListState.animateScrollToItem(serverLogs.size - 1)
+        }
+    }
+
+    val geminiModelOptions = listOf(
+        "gemini-3.5-flash" to "Ultra rápido, razonamiento táctico y multimodal",
+        "gemini-3.1-pro-preview" to "Máxima inteligencia y resolución compleja",
+        "gemini-2.5-flash-image" to "Generación y análisis visual avanzado"
+    )
 
     LazyColumn(
         modifier = modifier
@@ -105,14 +145,17 @@ fun ModelsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Header Card (Sophisticated Dark)
+        // Native Llama.cpp Server Lifecycle Manager Card
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("models_header_card"),
+                    .testTag("llama_server_manager_card"),
                 colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
-                border = BorderStroke(1.dp, SophisticatedBorder),
+                border = BorderStroke(
+                    1.dp,
+                    if (serverState == ServerState.RUNNING) EmeraldGreen.copy(alpha = 0.5f) else SophisticatedBorder
+                ),
                 shape = RoundedCornerShape(24.dp)
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
@@ -139,35 +182,193 @@ fun ModelsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "Motor GGUF & llama.cpp",
+                                    text = "Servidor Nativo llama.cpp",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = "Inferencia local / binario nativo acelerado",
+                                    text = "Motor de inferencia local sin censura",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextMuted
                                 )
                             }
                         }
 
-                        IconButton(
-                            onClick = { viewModel.scanGGUFModels(customScanPath.ifBlank { null }) },
-                            enabled = !isScanning,
-                            modifier = Modifier.testTag("btn_refresh_scan")
+                        // State Pill
+                        Surface(
+                            color = when (serverState) {
+                                ServerState.RUNNING -> EmeraldGreen.copy(alpha = 0.15f)
+                                ServerState.STARTING -> AmberGlow.copy(alpha = 0.15f)
+                                ServerState.ERROR -> CrimsonGlow.copy(alpha = 0.15f)
+                                ServerState.STOPPED -> SophisticatedBorder
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                when (serverState) {
+                                    ServerState.RUNNING -> EmeraldGreen.copy(alpha = 0.4f)
+                                    ServerState.STARTING -> AmberGlow.copy(alpha = 0.4f)
+                                    ServerState.ERROR -> CrimsonGlow.copy(alpha = 0.4f)
+                                    ServerState.STOPPED -> SophisticatedBorderSubtle
+                                }
+                            )
                         ) {
-                            if (isScanning) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    color = AccentLavender,
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Escanear",
-                                    tint = AccentLavender
+                            Text(
+                                text = when (serverState) {
+                                    ServerState.RUNNING -> "● ACTIVO"
+                                    ServerState.STARTING -> "● INICIANDO"
+                                    ServerState.ERROR -> "● ERROR"
+                                    ServerState.STOPPED -> "○ DETENIDO"
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = when (serverState) {
+                                    ServerState.RUNNING -> EmeraldGreen
+                                    ServerState.STARTING -> AmberGlow
+                                    ServerState.ERROR -> CrimsonGlow
+                                    ServerState.STOPPED -> TextMuted
+                                },
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Server parameters configuration grid
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = serverPortInput,
+                            onValueChange = { serverPortInput = it },
+                            label = { Text("Puerto", fontSize = 10.sp) },
+                            modifier = Modifier.weight(1f).testTag("input_server_port"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentLavender,
+                                unfocusedBorderColor = SophisticatedBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = serverThreadsInput,
+                            onValueChange = { serverThreadsInput = it },
+                            label = { Text("Hilos (-t)", fontSize = 10.sp) },
+                            modifier = Modifier.weight(1f).testTag("input_server_threads"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentLavender,
+                                unfocusedBorderColor = SophisticatedBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = serverCtxInput,
+                            onValueChange = { serverCtxInput = it },
+                            label = { Text("Ctx (-c)", fontSize = 10.sp) },
+                            modifier = Modifier.weight(1f).testTag("input_server_ctx"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentLavender,
+                                unfocusedBorderColor = SophisticatedBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = serverNglInput,
+                            onValueChange = { serverNglInput = it },
+                            label = { Text("NGL (GPU)", fontSize = 10.sp) },
+                            modifier = Modifier.weight(1f).testTag("input_server_ngl"),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AccentLavender,
+                                unfocusedBorderColor = SophisticatedBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Start / Stop Server Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (serverState == ServerState.RUNNING) {
+                            OutlinedButton(
+                                onClick = { viewModel.stopLlamaServer() },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = CrimsonGlow),
+                                border = BorderStroke(1.dp, CrimsonGlow.copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_stop_llama_server")
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Detener Servidor", fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            ElevatedButton(
+                                onClick = {
+                                    val port = serverPortInput.toIntOrNull() ?: 8080
+                                    val threads = serverThreadsInput.toIntOrNull() ?: 4
+                                    val ctx = serverCtxInput.toIntOrNull() ?: 4096
+                                    val ngl = serverNglInput.toIntOrNull() ?: 33
+                                    viewModel.startLlamaServer(port, threads, ctx, ngl)
+                                },
+                                enabled = serverState != ServerState.STARTING,
+                                colors = ButtonDefaults.elevatedButtonColors(
+                                    containerColor = AccentLavender,
+                                    contentColor = OnAccentLavender
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.weight(1f).testTag("btn_start_llama_server")
+                            ) {
+                                if (serverState == ServerState.STARTING) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = OnAccentLavender, strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Levantar Servidor llama-server", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Real-time server log console
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 90.dp, max = 150.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(TerminalBg)
+                            .border(1.dp, SophisticatedBorderSubtle, RoundedCornerShape(12.dp))
+                            .padding(10.dp)
+                    ) {
+                        LazyColumn(state = logsListState) {
+                            items(serverLogs) { logLine ->
+                                Text(
+                                    text = logLine,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = if (logLine.contains("✓") || logLine.contains("iniciado")) TerminalGreen else if (logLine.contains("❌") || logLine.contains("Error")) CrimsonGlow else TextSecondary,
+                                    lineHeight = 14.sp
                                 )
                             }
                         }
@@ -176,7 +377,186 @@ fun ModelsScreen(
             }
         }
 
-        // Custom Directory Scanner Input
+        // Google AI Studio (Gemini Cloud) Integration Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("gemini_cloud_integration_card"),
+                colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
+                border = BorderStroke(1.dp, SophisticatedBorderSubtle),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentLavenderContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Cloud,
+                                    contentDescription = null,
+                                    tint = AccentLavender,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Google AI Studio (Gemini)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Modelos en la nube de alta velocidad",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextMuted
+                                )
+                            }
+                        }
+
+                        Surface(
+                            color = AccentLavenderContainer,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(
+                                text = "Nube Gemini",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = OnAccentLavenderContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Selecciona el Modelo Gemini:", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Gemini Model selector chips
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        geminiModelOptions.forEach { (modelKey, desc) ->
+                            val isChosen = geminiModel == modelKey
+                            Surface(
+                                onClick = { viewModel.setGeminiConfig(modelKey, customApiKeyInput.ifBlank { null }) },
+                                color = if (isChosen) AccentLavenderContainer else SophisticatedBg,
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, if (isChosen) AccentLavender else SophisticatedBorderSubtle),
+                                modifier = Modifier.fillMaxWidth().testTag("gemini_option_$modelKey")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = modelKey,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = if (isChosen) OnAccentLavenderContainer else TextPrimary
+                                        )
+                                        Text(
+                                            text = desc,
+                                            fontSize = 11.sp,
+                                            color = if (isChosen) OnAccentLavenderContainer.copy(alpha = 0.8f) else TextMuted
+                                        )
+                                    }
+                                    if (isChosen) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = AccentLavender,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // API Key input (Optional custom key override)
+                    Text("Clave API de Google AI Studio (Opcional si se inyecta por Secretos):", style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = customApiKeyInput,
+                        onValueChange = {
+                            customApiKeyInput = it
+                            viewModel.setGeminiConfig(geminiModel, it)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("input_gemini_api_key"),
+                        placeholder = { Text("Clave API de AI Studio...", color = TextMuted, fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = AccentLavender, modifier = Modifier.size(18.dp)) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentLavender,
+                            unfocusedBorderColor = SophisticatedBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        singleLine = true
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            isTestingGemini = true
+                            geminiTestResult = null
+                            scope.launch {
+                                val res = viewModel.geminiClient.testConnection()
+                                geminiTestResult = res.second
+                                isTestingGemini = false
+                            }
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentLavender),
+                        border = BorderStroke(1.dp, SophisticatedBorder),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("btn_test_gemini")
+                    ) {
+                        if (isTestingGemini) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = AccentLavender, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Probar Conexión con Gemini ($geminiModel)", fontSize = 12.sp)
+                        }
+                    }
+
+                    geminiTestResult?.let { msg ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(TerminalBg)
+                                .border(1.dp, SophisticatedBorderSubtle, RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = msg,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                color = if (msg.contains("Conectado") || msg.contains("OK")) TerminalGreen else AmberGlow
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Custom GGUF File Scanner
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -186,7 +566,7 @@ fun ModelsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Ruta de Modelos GGUF",
+                        text = "Escanear Modelos GGUF en Almacenamiento",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = AccentLavender
@@ -199,9 +579,7 @@ fun ModelsScreen(
                         OutlinedTextField(
                             value = customScanPath,
                             onValueChange = { customScanPath = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("input_custom_path"),
+                            modifier = Modifier.weight(1f).testTag("input_custom_path"),
                             placeholder = { Text("/sdcard/Models o /sdcard/Download", color = TextMuted, fontSize = 13.sp) },
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = AccentLavender,
@@ -239,13 +617,13 @@ fun ModelsScreen(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Modelos GGUF Encontrados (${detectedModels.size})",
+                    text = "Modelos GGUF Detectados (${detectedModels.size})",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
                 )
                 Text(
-                    text = "Toca para cargar en memoria",
+                    text = "Toca para cargar en llama-server",
                     style = MaterialTheme.typography.bodySmall,
                     color = AccentLavender
                 )
@@ -260,115 +638,6 @@ fun ModelsScreen(
                 isSelected = isSelected,
                 onSelect = { viewModel.selectModel(model) }
             )
-        }
-
-        // Llama-server Endpoint Configuration Card
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("llama_config_card"),
-                colors = CardDefaults.cardColors(containerColor = SophisticatedSurface),
-                border = BorderStroke(1.dp, SophisticatedBorderSubtle),
-                shape = RoundedCornerShape(20.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            contentDescription = null,
-                            tint = AccentLavender,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Servidor llama.cpp (API Endpoint)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text("URL del Servidor (OpenAI-Compatible)", style = MaterialTheme.typography.labelSmall, color = TextMuted)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = urlInput,
-                        onValueChange = {
-                            urlInput = it
-                            viewModel.setLlamaConfig(it, llamaModelName)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("input_llama_url"),
-                        placeholder = { Text("http://127.0.0.1:11434 o http://localhost:8080", color = TextMuted) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = AccentLavender,
-                            unfocusedBorderColor = SophisticatedBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                isTestingConnection = true
-                                testResultMsg = null
-                                scope.launch {
-                                    val res = viewModel.llamaClient.testConnection()
-                                    testResultMsg = res.second
-                                    isTestingConnection = false
-                                }
-                            },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentLavender),
-                            border = BorderStroke(1.dp, SophisticatedBorder),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("btn_test_llama_conn")
-                        ) {
-                            if (isTestingConnection) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = AccentLavender, strokeWidth = 2.dp)
-                            } else {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Probar Servidor", fontSize = 12.sp)
-                            }
-                        }
-                    }
-
-                    testResultMsg?.let { msg ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(TerminalBg)
-                                .border(1.dp, SophisticatedBorderSubtle, RoundedCornerShape(10.dp))
-                                .padding(10.dp)
-                        ) {
-                            Text(
-                                text = msg,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                color = if (msg.contains("Conectado") || msg.contains("activo")) TerminalGreen else AmberGlow
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         // Uncensored Persona / Roleplay System Prompt Card
@@ -402,7 +671,7 @@ fun ModelsScreen(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Primera persona en español, sin restricciones para juegos de rol, control y ejecución nativa.",
+                        text = "Primera persona en español, juegos de rol y control táctico sin restricciones.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextMuted
                     )
