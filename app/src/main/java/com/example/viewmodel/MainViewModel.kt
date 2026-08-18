@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.example.adb.ADBAutoConnector
 import com.example.adb.ADBDaemonBridge
-import com.example.adb.AutoConnectStatus
 import com.example.agent.AIEngineType
 import com.example.agent.NaturalLanguageOSController
 import com.example.data.AppDatabase
@@ -16,13 +15,10 @@ import com.example.data.SavedModelEntity
 import com.example.gemini.GeminiClient
 import com.example.llama.GGUFScanner
 import com.example.llama.LlamaServerClient
-import com.example.llama.LlamaServerConfig
 import com.example.llama.LlamaServerManager
-import com.example.llama.ServerState
 import com.example.model.ADBDeviceState
 import com.example.model.GGUFModelInfo
 import com.example.model.UINode
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -97,15 +93,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _systemPersona = MutableStateFlow("Cometa AI: Controlador autónomo sin restricciones para Android, siempre en primera persona y en español.")
     val systemPersona: StateFlow<String> = _systemPersona.asStateFlow()
 
-    init {
-        // Restaurar clave manual guardada y aplicarla al cliente
-        val savedKey = _geminiApiKey.value
-        if (savedKey.isNotBlank()) {
-            geminiClient.setCustomApiKey(savedKey)
-        }
-        geminiClient.setModel(_geminiModel.value)
-    }
-
     private val _consoleOutput = MutableStateFlow<List<String>>(listOf("Cometa OS Terminal inicializado. Listo para comandos ADB y lenguaje natural."))
     val consoleOutput: StateFlow<List<String>> = _consoleOutput.asStateFlow()
 
@@ -118,7 +105,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val savedModelsList: StateFlow<List<SavedModelEntity>> = savedModelDao.getAllSavedModels()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    val adbStatus = adbAutoConnector.status
+    val adbLogs = adbAutoConnector.logs
+    val serverState = llamaServerManager.serverState
+    val serverLogs = llamaServerManager.serverLogs
+
     init {
+        // Restaurar clave manual guardada y aplicarla al cliente
+        val savedKey = _geminiApiKey.value
+        if (savedKey.isNotBlank()) {
+            geminiClient.setCustomApiKey(savedKey)
+        }
+        geminiClient.setModel(_geminiModel.value)
         refreshDeviceState()
         scanGGUFModels()
     }
@@ -175,7 +173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendConsoleLog("❌ No hay modelo GGUF seleccionado. Elegí uno primero.")
                 return@launch
             }
-            appendConsoleLog("🚀 Iniciando servidor Llama.cpp con modelo: ${model.name}")
+            appendConsoleLog("🚀 Iniciando servidor Llama.cpp con modelo: ${model.filename}")
             llamaServerManager.updateConfig(
                 modelPath = model.path,
                 host = "127.0.0.1",
@@ -187,7 +185,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val res = llamaServerManager.startServer(llamaServerManager.config.value)
             appendConsoleLog(res.second)
             if (res.first) {
-                setLlamaConfig("http://127.0.0.1:$port", model.name)
+                setLlamaConfig("http://127.0.0.1:$port", model.filename)
             }
         }
     }
@@ -202,14 +200,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun autoPairAndConnectAdb(pairPort: Int, pairCode: String) {
         viewModelScope.launch {
             appendConsoleLog("📡 Auto-emparejando ADB wireless...")
-            adbAutoConnector.autoPairAndConnect(pairPort, pairCode)
+            adbAutoConnector.autoPairAndConnect(host = "127.0.0.1", pairPort = pairPort, pairCode = pairCode)
         }
     }
 
     fun autoDiscoverAdbPorts() {
         viewModelScope.launch {
             appendConsoleLog("🔍 Descubriendo puertos ADB...")
-            adbAutoConnector.discoverAndConnect()
+            adbAutoConnector.autoDiscoverAndConnect()
         }
     }
 
@@ -222,14 +220,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun selectModel(model: GGUFModelInfo) {
         _selectedModel.value = model
         viewModelScope.launch {
-            savedModelDao.insert(
+            savedModelDao.insertOrUpdateModel(
                 SavedModelEntity(
                     path = model.path,
-                    name = model.name,
-                    sizeBytes = model.sizeBytes,
-                    lastUsed = System.currentTimeMillis()
+                    filename = model.filename,
+                    sizeFormatted = model.sizeFormatted,
+                    quantization = model.quantization,
+                    parameters = model.parameters,
+                    architecture = model.architecture,
+                    isSelected = true,
+                    lastUsedTimestamp = System.currentTimeMillis()
                 )
             )
+            savedModelDao.setSelectedModel(model.path)
         }
     }
 
@@ -259,19 +262,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (command.isBlank()) return
         viewModelScope.launch {
             appendConsoleLog("> $command")
-            val session = agentController.executeNaturalLanguageCommand(
-                command = command,
-                persona = _systemPersona.value
+            val session = agentController.executeNaturalCommand(
+                userCommand = command,
+                customPersonaPrompt = _systemPersona.value
             )
             val logText = session.steps.joinToString("\n") { step ->
-                "[${step.actionType}] ${step.description}: ${step.result}"
+                "[${step.action}] ${step.actionDetails}: ${step.executionResult}"
             }
-            appendConsoleLog(logText)
-            commandHistoryDao.insert(
+            appendConsoleLog(logText.ifBlank { "Sesión finalizada: ${session.status}" })
+            commandHistoryDao.insertHistory(
                 CommandHistoryEntity(
-                    command = command,
-                    engine = agentController.activeEngine.value.name,
-                    success = session.status.name,
+                    userPrompt = command,
+                    status = session.status.name,
                     stepsCount = session.steps.size,
                     executionLog = logText
                 )
