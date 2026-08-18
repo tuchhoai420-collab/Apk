@@ -28,10 +28,10 @@ jobs:
         run: |
           sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" > /dev/null
 
-      - name: Configurar Gradle 9.1.0
+      - name: Configurar Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.1.0'
+          gradle-version: '9.3.1'
 
       - name: Dar permisos de ejecución (si existe gradlew)
         run: chmod +x ./gradlew || true
