@@ -1,0 +1,6 @@
+{
+  "name": "Cometa OS",
+  "description": "Controlador autónomo de Android por lenguaje natural, escáner de modelos GGUF, integración llama.cpp y puente ADB inalámbrico.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
