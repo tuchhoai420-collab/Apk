@@ -172,19 +172,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val model = _selectedModel.value
             if (model == null) {
-                appendConsoleLog("❌ No hay modelo GGUF seleccionado.")
+                appendConsoleLog("❌ No hay modelo GGUF seleccionado. Elegí uno primero.")
                 return@launch
             }
-            appendConsoleLog("🚀 Iniciando llama-server con ${model.name}...")
+            appendConsoleLog("🚀 Iniciando servidor Llama.cpp con modelo: ${model.name}")
             llamaServerManager.updateConfig(
                 modelPath = model.path,
+                host = "127.0.0.1",
                 port = port,
                 threads = threads,
                 contextSize = contextSize,
                 gpuLayers = gpuLayers
             )
-            val cfg = llamaServerManager.config.value
-            val res = llamaServerManager.startServer(cfg)
+            val res = llamaServerManager.startServer(llamaServerManager.config.value)
             appendConsoleLog(res.second)
             if (res.first) {
                 setLlamaConfig("http://127.0.0.1:$port", model.name)
@@ -194,7 +194,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopLlamaServer() {
         viewModelScope.launch {
-            appendConsoleLog("⏹ Deteniendo llama-server...")
             val res = llamaServerManager.stopServer()
             appendConsoleLog(res.second)
         }
@@ -202,19 +201,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun autoPairAndConnectAdb(pairPort: Int, pairCode: String) {
         viewModelScope.launch {
-            appendConsoleLog("📡 Auto-pairing ADB en puerto $pairPort...")
-            setPairingConfig(pairPort, pairCode)
-            val result = adbAutoConnector.autoPairAndConnect(pairPort, pairCode)
-            appendConsoleLog(result)
-            refreshDeviceState()
+            appendConsoleLog("📡 Auto-emparejando ADB wireless...")
+            adbAutoConnector.autoPairAndConnect(pairPort, pairCode)
         }
     }
 
     fun autoDiscoverAdbPorts() {
         viewModelScope.launch {
-            appendConsoleLog("🔍 Descubriendo puertos ADB abiertos...")
-            val found = adbAutoConnector.discoverOpenPorts()
-            appendConsoleLog(found)
+            appendConsoleLog("🔍 Descubriendo puertos ADB...")
+            adbAutoConnector.discoverAndConnect()
         }
     }
 
@@ -226,13 +221,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectModel(model: GGUFModelInfo) {
         _selectedModel.value = model
-        appendConsoleLog("✓ Modelo seleccionado: ${model.name} (${model.sizeFormatted})")
+        viewModelScope.launch {
+            savedModelDao.insert(
+                SavedModelEntity(
+                    path = model.path,
+                    name = model.name,
+                    sizeBytes = model.sizeBytes,
+                    lastUsed = System.currentTimeMillis()
+                )
+            )
+        }
     }
 
     fun scanGGUFModels(customDir: String? = null) {
         viewModelScope.launch {
             _isScanningModels.value = true
-            appendConsoleLog("🔍 Escaneando modelos GGUF...")
+            appendConsoleLog("📂 Escaneando modelos GGUF...")
             try {
                 val models = ggufScanner.scanAllLocations(customDir)
                 _detectedModels.value = models
@@ -257,17 +261,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendConsoleLog("> $command")
             val session = agentController.executeNaturalLanguageCommand(
                 command = command,
-                systemPersona = _systemPersona.value
+                persona = _systemPersona.value
             )
             val logText = session.steps.joinToString("\n") { step ->
-                "[${step.status}] ${step.description}: ${step.result ?: ""}"
+                "[${step.actionType}] ${step.description}: ${step.result}"
             }
-            appendConsoleLog(logText.ifBlank { "(sin pasos)" })
+            appendConsoleLog(logText)
             commandHistoryDao.insert(
                 CommandHistoryEntity(
                     command = command,
                     engine = agentController.activeEngine.value.name,
-                    status = session.status.name,
+                    success = session.status.name,
                     stepsCount = session.steps.size,
                     executionLog = logText
                 )
