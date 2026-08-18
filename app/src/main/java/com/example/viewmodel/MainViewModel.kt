@@ -112,10 +112,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _screenNodes = MutableStateFlow<List<UINode>>(emptyList())
     val screenNodes: StateFlow<List<UINode>> = _screenNodes.asStateFlow()
 
-    val adbStatus = adbAutoConnector.status
-    val adbLogs = adbAutoConnector.logs
+    val historyList: StateFlow<List<CommandHistoryEntity>> = commandHistoryDao.getAllHistory()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    fun setCurrentTab(tab: Int) {
+    val savedModelsList: StateFlow<List<SavedModelEntity>> = savedModelDao.getAllSavedModels()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    init {
+        refreshDeviceState()
+        scanGGUFModels()
+    }
+
+    fun setTab(tab: Int) {
         _currentTab.value = tab
     }
 
@@ -140,7 +148,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         adbBridge.updateTarget(host, port)
     }
 
-    fun setPairConfig(port: Int, code: String) {
+    fun setPairingConfig(port: Int, code: String) {
         _pairPort.value = port
         _pairCode.value = code
     }
@@ -151,19 +159,90 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         llamaClient.updateConfig(url, model)
     }
 
-    fun setSystemPersona(persona: String) {
+    fun setPersona(persona: String) {
         _systemPersona.value = persona
     }
 
-    fun appendConsole(line: String) {
-        val current = _consoleOutput.value.toMutableList()
-        current.add(line)
-        if (current.size > 300) current.removeAt(0)
-        _consoleOutput.value = current
+    fun startLlamaServer(
+        port: Int = 8080,
+        threads: Int = 4,
+        contextSize: Int = 4096,
+        gpuLayers: Int = 0
+    ) {
+        viewModelScope.launch {
+            val model = _selectedModel.value
+            if (model == null) {
+                appendConsoleLog("❌ No hay modelo GGUF seleccionado.")
+                return@launch
+            }
+            appendConsoleLog("🚀 Iniciando llama-server con ${model.name}...")
+            llamaServerManager.updateConfig(
+                modelPath = model.path,
+                port = port,
+                threads = threads,
+                contextSize = contextSize,
+                gpuLayers = gpuLayers
+            )
+            val cfg = llamaServerManager.config.value
+            val res = llamaServerManager.startServer(cfg)
+            appendConsoleLog(res.second)
+            if (res.first) {
+                setLlamaConfig("http://127.0.0.1:$port", model.name)
+            }
+        }
     }
 
-    fun clearConsole() {
-        _consoleOutput.value = listOf("Consola reiniciada.")
+    fun stopLlamaServer() {
+        viewModelScope.launch {
+            appendConsoleLog("⏹ Deteniendo llama-server...")
+            val res = llamaServerManager.stopServer()
+            appendConsoleLog(res.second)
+        }
+    }
+
+    fun autoPairAndConnectAdb(pairPort: Int, pairCode: String) {
+        viewModelScope.launch {
+            appendConsoleLog("📡 Auto-pairing ADB en puerto $pairPort...")
+            setPairingConfig(pairPort, pairCode)
+            val result = adbAutoConnector.autoPairAndConnect(pairPort, pairCode)
+            appendConsoleLog(result)
+            refreshDeviceState()
+        }
+    }
+
+    fun autoDiscoverAdbPorts() {
+        viewModelScope.launch {
+            appendConsoleLog("🔍 Descubriendo puertos ADB abiertos...")
+            val found = adbAutoConnector.discoverOpenPorts()
+            appendConsoleLog(found)
+        }
+    }
+
+    fun openDevSettings() {
+        viewModelScope.launch {
+            adbBridge.executeShell("am start -a android.settings.APPLICATION_DEVELOPMENT_SETTINGS")
+        }
+    }
+
+    fun selectModel(model: GGUFModelInfo) {
+        _selectedModel.value = model
+        appendConsoleLog("✓ Modelo seleccionado: ${model.name} (${model.sizeFormatted})")
+    }
+
+    fun scanGGUFModels(customDir: String? = null) {
+        viewModelScope.launch {
+            _isScanningModels.value = true
+            appendConsoleLog("🔍 Escaneando modelos GGUF...")
+            try {
+                val models = ggufScanner.scanAllLocations(customDir)
+                _detectedModels.value = models
+                appendConsoleLog("✓ Encontrados ${models.size} modelos GGUF.")
+            } catch (e: Exception) {
+                appendConsoleLog("❌ Error al escanear: ${e.message}")
+            } finally {
+                _isScanningModels.value = false
+            }
+        }
     }
 
     fun refreshDeviceState() {
@@ -172,52 +251,97 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun scanModels(customPath: String? = null) {
+    fun executeNaturalCommand(command: String) {
+        if (command.isBlank()) return
         viewModelScope.launch {
-            _isScanningModels.value = true
-            try {
-                _detectedModels.value = ggufScanner.scanAllLocations(customPath)
-            } finally {
-                _isScanningModels.value = false
+            appendConsoleLog("> $command")
+            val session = agentController.executeNaturalLanguageCommand(
+                command = command,
+                systemPersona = _systemPersona.value
+            )
+            val logText = session.steps.joinToString("\n") { step ->
+                "[${step.status}] ${step.description}: ${step.result ?: ""}"
+            }
+            appendConsoleLog(logText.ifBlank { "(sin pasos)" })
+            commandHistoryDao.insert(
+                CommandHistoryEntity(
+                    command = command,
+                    engine = agentController.activeEngine.value.name,
+                    status = session.status.name,
+                    stepsCount = session.steps.size,
+                    executionLog = logText
+                )
+            )
+            refreshDeviceState()
+        }
+    }
+
+    fun cancelAgent() {
+        agentController.cancelCurrentExecution()
+    }
+
+    fun executeAdbShell(command: String) {
+        if (command.isBlank()) return
+        viewModelScope.launch {
+            appendConsoleLog("$ $command")
+            val output = adbBridge.executeShell(command)
+            appendConsoleLog(output.output)
+            refreshDeviceState()
+        }
+    }
+
+    fun pairWirelessAdb(ip: String, port: Int, code: String) {
+        viewModelScope.launch {
+            appendConsoleLog("📡 Intentando emparejar con $ip:$port usando código $code...")
+            val result = adbBridge.pairDevice(ip, port, code)
+            appendConsoleLog(result.output)
+            if (result.success) {
+                appendConsoleLog("🔗 Conectando a puerto principal de depuración ($ip:${_adbPort.value})...")
+                val connRes = adbBridge.testConnection()
+                appendConsoleLog(connRes.output)
+                refreshDeviceState()
             }
         }
     }
 
-    fun selectModel(model: GGUFModelInfo) {
-        _selectedModel.value = model
-    }
-
-    fun startLlamaServer() {
+    fun connectWirelessAdb(ip: String, port: Int) {
         viewModelScope.launch {
-            val cfg = llamaServerManager.config.value
-            val res = llamaServerManager.startServer(cfg)
-            appendConsole(res.second)
+            setAdbConfig(ip, port)
+            appendConsoleLog("🔗 Conectando a $ip:$port...")
+            val res = adbBridge.testConnection()
+            appendConsoleLog(res.output)
+            refreshDeviceState()
         }
     }
 
-    fun stopLlamaServer() {
+    fun sendQuickKeyEvent(keyCode: String) {
         viewModelScope.launch {
-            val res = llamaServerManager.stopServer()
-            appendConsole(res.second)
+            appendConsoleLog("Pulsando botón: $keyCode")
+            val res = adbBridge.injectKeyEvent(keyCode)
+            appendConsoleLog(res.output)
+            refreshDeviceState()
         }
     }
 
-    fun updateLlamaServerConfig(
-        modelPath: String? = null,
-        host: String? = null,
-        port: Int? = null,
-        threads: Int? = null,
-        contextSize: Int? = null,
-        gpuLayers: Int? = null
-    ) {
-        val c = llamaServerManager.config.value
-        llamaServerManager.updateConfig(
-            modelPath = modelPath ?: c.modelPath,
-            host = host ?: c.host,
-            port = port ?: c.port,
-            threads = threads ?: c.threads,
-            contextSize = contextSize ?: c.contextSize,
-            gpuLayers = gpuLayers ?: c.gpuLayers
-        )
+    fun captureInspectorNodes() {
+        viewModelScope.launch {
+            appendConsoleLog("🔍 Capturando nodos interactivos de la pantalla activa...")
+            val nodes = adbBridge.captureScreenNodes()
+            _screenNodes.value = nodes
+            appendConsoleLog("✓ Se detectaron ${nodes.size} elementos de interfaz.")
+        }
+    }
+
+    private fun appendConsoleLog(line: String) {
+        val current = _consoleOutput.value.toMutableList()
+        current.add(line)
+        if (current.size > 200) {
+            current.removeAt(0)
+        }
+        _consoleOutput.value = current
+    }
+
+    fun clearConsole() {
+        _consoleOutput.value = listOf("Consola reiniciada.")
     }
 }
